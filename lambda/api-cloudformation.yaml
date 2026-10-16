@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MumCare API Backend - Lambda + API Gateway
+
+Parameters:
+  BedrockAPIKey:
+    Type: String
+    Description: AWS Bedrock API Key
+    NoEcho: true
+  
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS Region for Bedrock
+  
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    Description: Bedrock Model ID
+
+Resources:
+  # IAM Role for Lambda
+  ApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MumCareApiLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+
+  # Lambda Function
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MumCareApiHandler
+      Runtime: nodejs20.x
+      Handler: api-handler.handler
+      Role: !GetAtt ApiLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          BEDROCK_API_KEY: !Ref BedrockAPIKey
+          AWS_BEDROCK_REGION: !Ref BedrockRegion
+          AWS_BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'Placeholder - upload actual code' })
+            };
+          };
+
+  # API Gateway HTTP API
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: MumCareApi
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+
+  # API Gateway Integration
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # API Gateway Routes
+  ApiRouteCompleteCareReport:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/complete-care-report'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteWellnessCheck:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/wellness-check'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteBreastfeedingChat:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/breastfeeding-chat'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteMealAnalysis:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/meal-analysis'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteRecoveryPlan:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/recovery-plan'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteProgressAnalysis:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/progress-analysis'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteCommunityDiscussion:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/community-discussion'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiRouteDaySummary:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /api/day-summary'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  # API Gateway Stage
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: prod
+      AutoDeploy: true
+
+  # Lambda Permission for API Gateway
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref ApiFunction
+  
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ApiFunction.Arn

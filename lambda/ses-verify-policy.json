@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ses:CreateEmailIdentity",
+        "ses:GetEmailIdentity",
+        "ses:ListEmailIdentities",
+        "sesv2:CreateEmailIdentity",
+        "sesv2:GetEmailIdentity",
+        "sesv2:ListEmailIdentities"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

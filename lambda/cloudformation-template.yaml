@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'MumCare Notification System - Lambda Functions, DynamoDB, EventBridge'
+
+Parameters:
+  FromEmail:
+    Type: String
+    Description: Email address for sending notifications (must be verified in SES)
+    Default: noreply@mumcare.app
+  
+  NotificationSchedule:
+    Type: String
+    Description: Cron expression for scheduled notifications
+    Default: 'cron(0 * * * ? *)'
+
+Resources:
+  # DynamoDB Tables
+  UserProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MumCareUserProfiles
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Application
+          Value: MumCare
+  
+  NotificationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MumCareNotifications
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: notificationId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: notificationId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdTimestampIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Application
+          Value: MumCare
+
+  # IAM Role for Lambda Functions
+  NotificationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MumCareNotificationLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NotificationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt UserProfilesTable.Arn
+                  - !GetAtt NotificationsTable.Arn
+                  - !Sub '${NotificationsTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:MumCare*'
+
+  # Lambda Function: Notification Handler
+  NotificationHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MumCareNotificationHandler
+      Runtime: nodejs20.x
+      Handler: notification-handler.handler
+      Role: !GetAtt NotificationLambdaRole.Arn
+      Code:
+        ZipFile: |
+          // Placeholder - deploy actual code via CLI or CI/CD
+          export const handler = async (event) => {
+            return { statusCode: 200, body: 'Placeholder' };
+          };
+      Environment:
+        Variables:
+          NOTIFICATION_TABLE: !Ref NotificationsTable
+          FROM_EMAIL: !Ref FromEmail
+      Timeout: 30
+      MemorySize: 256
+      Tags:
+        - Key: Application
+          Value: MumCare
+
+  # Lambda Function: Scheduled Notifications
+  ScheduledNotificationsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MumCareScheduledNotifications
+      Runtime: nodejs20.x
+      Handler: scheduled-notifications.handler
+      Role: !GetAtt NotificationLambdaRole.Arn
+      Code:
+        ZipFile: |
+          // Placeholder - deploy actual code via CLI or CI/CD
+          export const handler = async (event) => {
+            return { statusCode: 200, body: 'Placeholder' };
+          };
+      Environment:
+        Variables:
+          USER_PROFILES_TABLE: !Ref UserProfilesTable
+          NOTIFICATION_HANDLER_FUNCTION: !Ref NotificationHandlerFunction
+      Timeout: 300
+      MemorySize: 512
+      Tags:
+        - Key: Application
+          Value: MumCare
+
+  # EventBridge Rule for Scheduled Notifications
+  ScheduledNotificationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: MumCareScheduledNotifications
+      Description: Trigger scheduled notifications for MumCare users
+      ScheduleExpression: !Ref NotificationSchedule
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ScheduledNotificationsFunction.Arn
+          Id: ScheduledNotificationsTarget
+
+  # Permission for EventBridge to invoke Lambda
+  ScheduledNotificationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScheduledNotificationsFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledNotificationRule.Arn
+
+  # API Gateway for triggering notifications from app
+  NotificationApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: MumCareNotificationApi
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+
+  NotificationApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref NotificationApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt NotificationHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  NotificationApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref NotificationApi
+      RouteKey: 'POST /notify'
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref NotificationApiIntegration
+
+  NotificationApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref NotificationApi
+      StageName: prod
+      AutoDeploy: true
+
+  NotificationApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NotificationHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotificationApi}/*'
+
+Outputs:
+  NotificationApiEndpoint:
+    Description: API Gateway endpoint for triggering notifications
+    Value: !Sub 'https://${NotificationApi}.execute-api.${AWS::Region}.amazonaws.com/prod/notify'
+    Export:
+      Name: MumCareNotificationApiEndpoint
+  
+  UserProfilesTableName:
+    Description: DynamoDB table for user profiles
+    Value: !Ref UserProfilesTable
+    Export:
+      Name: MumCareUserProfilesTable
+  
+  NotificationsTableName:
+    Description: DynamoDB table for notification logs
+    Value: !Ref NotificationsTable
+    Export:
+      Name: MumCareNotificationsTable
+  
+  NotificationHandlerFunctionArn:
+    Description: ARN of the notification handler Lambda function
+    Value: !GetAtt NotificationHandlerFunction.Arn
+    Export:
+      Name: MumCareNotificationHandlerArn
